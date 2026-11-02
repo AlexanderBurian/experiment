@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>kept.cz — ping pong</title>
+<meta name="description" content="Oficiální ping pong. Sleduj, jestli trefí roh. Nikdy netrefí roh.">
+<meta property="og:title" content="kept.cz">
+<meta property="og:description" content="Sleduj, jestli trefí roh. Spoiler: netrefí.">
+<meta property="og:image" content="face.webp">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="icon" href="face.webp">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --fg: #e8e8f0;
+    --dim: #6b6b85;
+    --kept: #f5b301;   /* KEPT žlutá */
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 50%, #15151f 0%, var(--bg) 70%) var(--bg);
+    color: var(--fg);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;      /* kliky chytá window, obrázky nic neblokují */
+    z-index: 100;              /* celá vrstva obrázků nad HUD, footerem i logem */
+  }
+  .face {
+    position: absolute;
+    top: 0; left: 0;
+    width: 120px;
+    z-index: 90;              /* obrázky vždy na nejvyšší vrstvě */
+    will-change: transform;
+    filter: drop-shadow(0 8px 24px rgba(0,0,0,.6));
+    pointer-events: none;
+    border-radius: 14px;
+  }
+  .face img {
+    display: block;
+    width: 100%;
+    border-radius: 14px;
+  }
+
+  /* HUD */
+  #hud {
+    position: fixed;
+    top: max(14px, env(safe-area-inset-top));
+    left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 0 max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-area-inset-right));
+    pointer-events: none;
+    z-index: 10;
+  }
+  .stat { line-height: 1.1; }
+  .stat .label {
+    font-size: clamp(10px, 2.6vw, 13px);
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .stat .val {
+    font-size: clamp(28px, 9vw, 56px);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat.right { text-align: right; }
+  .stat.right .val { color: var(--kept); }
+
+  .face.rare {
+    border-radius: 10px;
+    box-shadow: 0 0 0 3px var(--kept), 0 12px 40px rgba(245,179,1,.3);
+  }
+  .face.rare img { border-radius: 10px; }
+
+  #title {
+    position: fixed;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 20;
+    transition: opacity .8s ease, transform .8s ease;
+    pointer-events: none;
+    padding: 0 20px;
+  }
+  #title .badge {
+    width: clamp(240px, 72vw, 440px);
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    filter: drop-shadow(0 14px 44px rgba(245,179,1,.3));
+  }
+  #title .dom {
+    margin-top: 20px;
+    font-size: clamp(17px, 4.6vw, 28px);
+    font-weight: 800;
+    letter-spacing: .03em;
+    color: var(--fg);
+  }
+  #title .sub {
+    margin-top: 8px;
+    font-size: clamp(13px, 3.6vw, 20px);
+    color: var(--dim);
+  }
+  #title.hidden { opacity: 0; transform: translate(-50%, -62%); }
+
+  #corner {
+    position: fixed;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%) scale(.6);
+    font-size: clamp(34px, 11vw, 84px);
+    font-weight: 900;
+    letter-spacing: .02em;
+    color: var(--kept);
+    text-shadow: 0 0 28px rgba(245,179,1,.9), 0 0 64px rgba(245,179,1,.5);
+    opacity: 0;
+    z-index: 30;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  #corner.pop { animation: pop 1.3s ease forwards; }
+  @keyframes pop {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(.5) rotate(-6deg); }
+    15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.15) rotate(3deg); }
+    30%  { transform: translate(-50%, -50%) scale(1) rotate(-2deg); }
+    80%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -62%) scale(1) rotate(0); }
+  }
+  #flash {
+    position: fixed; inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 25;
+  }
+  #flash.go { animation: flash .5s ease forwards; }
+  @keyframes flash { 0%{opacity:.85;} 100%{opacity:0;} }
+
+  footer {
+    position: fixed;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: 0; right: 0;
+    text-align: center;
+    font-size: clamp(10px, 2.8vw, 13px);
+    color: var(--dim);
+    letter-spacing: .14em;
+    z-index: 10;
+    pointer-events: none;
+  }
+  footer b { color: var(--fg); letter-spacing: .08em; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <div id="hud">
+    <div class="stat">
+      <div class="label">Odrazy</div>
+      <div class="val" id="bounces">0</div>
+    </div>
+    <div class="stat right">
+      <div class="label">Rohy</div>
+      <div class="val" id="corners">0</div>
+    </div>
+  </div>
+
+  <div id="title">
+    <svg class="badge" viewBox="0 0 320 112" role="img" aria-label="KEPT">
+      <rect x="6" y="6" width="308" height="100" rx="18" fill="none" stroke="var(--kept)" stroke-width="10"/>
+      <rect x="20" y="20" width="280" height="72" rx="11" fill="none" stroke="var(--kept)" stroke-width="4.5"/>
+      <text x="160" y="57" text-anchor="middle" dominant-baseline="central"
+            font-family="'Arial Black','Arial Narrow',Arial,sans-serif" font-weight="900"
+            font-size="62" letter-spacing="1" textLength="232" lengthAdjust="spacingAndGlyphs"
+            fill="var(--kept)">KEPT</text>
+    </svg>
+    <div class="dom">kept.cz</div>
+    <p class="sub">trefí&nbsp;roh? ťukni&nbsp;/&nbsp;klikni a&nbsp;uvidíš</p>
+  </div>
+
+  <div id="corner">ROHOVÁ&nbsp;TREFA!</div>
+  <div id="flash"></div>
+
+  <footer>oficiální ping&nbsp;pong · <b>kept.cz</b> · roh pořád nikde</footer>
+
+<script>
+(function () {
+  "use strict";
+  const stage   = document.getElementById("stage");
+  const bEl      = document.getElementById("bounces");
+  const cEl      = document.getElementById("corners");
+  const titleEl = document.getElementById("title");
+  const cornerEl = document.getElementById("corner");
+  const flashEl = document.getElementById("flash");
+
+  const SMALL      = Math.min(window.innerWidth, window.innerHeight) < 560;
+  const MAX_FACES  = SMALL ? 8 : 12; // na mobilu míň kusů kvůli plynulosti
+  const RARE_EVERY = 3;              // každý třetí spawn je rare PTAK drip
+  let bounces = 0, corners = 0, started = false, spawnCount = 0;
+
+  const faces = [];
+  const NORMAL_SRC = "face.webp";
+  // PTAK drip pool — přidej sem další obrázek a rovnou se zařadí do rotace.
+  // rare2.webp zatím nemusí existovat; onerror ho bezpečně nahradí.
+  const RARE_SRCS  = ["rare.webp", "rare2.webp"];
+  const ratioCache = { "face.webp": 4 / 3, "rare.webp": 740 / 2000, "rare2.webp": 740 / 2000 };
+
+  function faceSize() {
+    const s = Math.min(window.innerWidth, window.innerHeight);
+    return Math.max(70, Math.min(150, s * 0.22));
+  }
+
+  function widthFor(type) {
+    const base = faceSize();
+    // Lamborghini (rare) pořádně velký – skoro přes celou šířku
+    if (type === "rare") return Math.min(window.innerWidth * 0.94, base * 5.2);
+    return base;
+  }
+
+  function spawn(x, y) {
+    if (faces.length >= MAX_FACES) return;
+    spawnCount++;
+    const type = (spawnCount % RARE_EVERY === 0) ? "rare" : "normal";
+
+    const src = (type === "rare")
+      ? RARE_SRCS[Math.floor(Math.random() * RARE_SRCS.length)]
+      : NORMAL_SRC;
+
+    const el = document.createElement("div");
+    el.className = "face" + (type === "rare" ? " rare" : "");
+    const img = document.createElement("img");
+    img.decoding = "async";
+    // když chybí nějaký rare obrázek, bezpečně spadni na existující
+    img.addEventListener("error", function () {
+      img.src = (img.getAttribute("src") !== RARE_SRCS[0]) ? RARE_SRCS[0] : NORMAL_SRC;
+    });
+    img.src = src;
+    img.alt = "";
+    el.appendChild(img);
+    stage.appendChild(el);
+
+    const w = widthFor(type);
+    const ratio = ratioCache[src] || 0.5;
+    const h = w * ratio;
+    el.style.width = w + "px";
+
+    const base = Math.max(2.2, Math.min(window.innerWidth, window.innerHeight) / 220);
+    const dir = () => (Math.random() < 0.5 ? -1 : 1);
+    const f = {
+      el, img, type, w: w, h: h, ratio: ratio,
+      x: x != null ? x - w / 2 : Math.random() * Math.max(1, window.innerWidth - w),
+      y: y != null ? y - h / 2 : Math.random() * Math.max(1, window.innerHeight - h),
+      vx: dir() * base * (0.8 + Math.random() * 0.6),
+      vy: dir() * base * (0.8 + Math.random() * 0.6),
+      hue: (type === "rare") ? 0 : Math.random() * 360
+    };
+    // drž spawn mimo kraje, ať hned netrefíme falešný roh
+    f.x = Math.max(0, Math.min(window.innerWidth - w, f.x));
+    f.y = Math.max(0, Math.min(window.innerHeight - h, f.y));
+
+    // po načtení zamkni reálný poměr stran a znovu dopočítej výšku
+    img.addEventListener("load", function () {
+      if (!img.naturalWidth || !img.naturalHeight) return;
+      f.ratio = img.naturalHeight / img.naturalWidth;
+      ratioCache[img.getAttribute("src")] = f.ratio;
+      f.h = f.w * f.ratio;
+      f.x = Math.max(0, Math.min(window.innerWidth - f.w, f.x));
+      f.y = Math.max(0, Math.min(window.innerHeight - f.h, f.y));
+      draw(f);
+    });
+
+    faces.push(f);
+    draw(f);
+  }
+
+  function draw(f) {
+    f.el.style.transform = "translate(" + f.x + "px," + f.y + "px)";
+    // rare (PTAK) necháme v původních barvách, obyčejné obličeje DVD-barví
+    f.el.style.filter = (f.type === "rare")
+      ? "drop-shadow(0 10px 30px rgba(0,0,0,.6))"
+      : "drop-shadow(0 8px 24px rgba(0,0,0,.6)) hue-rotate(" + f.hue + "deg)";
+  }
+
+  function recolor(f) { f.hue = (f.hue + 47 + Math.random() * 40) % 360; }
+
+  function celebrateCorner() {
+    corners++;
+    cEl.textContent = corners;
+    cornerEl.classList.remove("pop"); void cornerEl.offsetWidth; cornerEl.classList.add("pop");
+    flashEl.classList.remove("go"); void flashEl.offsetWidth; flashEl.classList.add("go");
+    if (navigator.vibrate) navigator.vibrate([40, 30, 120]);
+  }
+
+  function tick() {
+    const W = window.innerWidth, H = window.innerHeight;
+    for (const f of faces) {
+      f.x += f.vx; f.y += f.vy;
+      let hitX = false, hitY = false;
+
+      if (f.x <= 0)            { f.x = 0;         f.vx = Math.abs(f.vx);  hitX = true; }
+      else if (f.x + f.w >= W) { f.x = W - f.w;   f.vx = -Math.abs(f.vx); hitX = true; }
+      if (f.y <= 0)            { f.y = 0;         f.vy = Math.abs(f.vy);  hitY = true; }
+      else if (f.y + f.h >= H) { f.y = H - f.h;   f.vy = -Math.abs(f.vy); hitY = true; }
+
+      if (hitX || hitY) {
+        bounces++;
+        recolor(f);
+        // only a TRUE simultaneous corner counts — genuinely rare, that's the joke
+        if (hitX && hitY) celebrateCorner();
+      }
+      draw(f);
+    }
+    if (bounces) bEl.textContent = bounces;
+    requestAnimationFrame(tick);
+  }
+
+  function begin(ev) {
+    if (!started) {
+      started = true;
+      titleEl.classList.add("hidden");
+      setTimeout(() => titleEl.remove(), 900);
+      return; // first tap just starts; keep one face
+    }
+    let px, py;
+    if (ev && ev.touches && ev.touches[0]) { px = ev.touches[0].clientX; py = ev.touches[0].clientY; }
+    else if (ev && ev.clientX != null)      { px = ev.clientX; py = ev.clientY; }
+    spawn(px, py);
+  }
+
+  // resize: keep faces in bounds + rescale
+  let rT;
+  window.addEventListener("resize", function () {
+    clearTimeout(rT);
+    rT = setTimeout(function () {
+      for (const f of faces) {
+        f.w = widthFor(f.type);
+        f.h = f.w * f.ratio;
+        f.el.style.width = f.w + "px";
+        f.x = Math.max(0, Math.min(window.innerWidth - f.w, f.x));
+        f.y = Math.max(0, Math.min(window.innerHeight - f.h, f.y));
+        draw(f);
+      }
+    }, 120);
+  });
+
+  window.addEventListener("pointerdown", begin, { passive: true });
+
+  // first face + loop
+  spawn();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
